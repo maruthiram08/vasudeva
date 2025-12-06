@@ -1,0 +1,38 @@
+# Python / Backend
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+.env
+
+# Vector Database
+vectordb/
+*.faiss
+*.pkl
+
+# Documents (too large for git)
+*.pdf
+
+# Node / Frontend
+node_modules/
+dist/
+build/
+.DS_Store
+*.log
+npm-debug.log*
+.vite/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+Thumbs.db
