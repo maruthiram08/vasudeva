@@ -4,6 +4,8 @@ Provides solutions and mental wellness support based on ancient wisdom texts
 """
 
 import os
+import json
+import tempfile
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
@@ -14,6 +16,13 @@ from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
 from dotenv import load_dotenv
+
+try:
+    from google.cloud import storage
+    GCS_AVAILABLE = True
+except ImportError:
+    GCS_AVAILABLE = False
+    print("⚠️  google-cloud-storage not installed. GCS features disabled.")
 
 # Load environment variables
 load_dotenv()
@@ -30,7 +39,9 @@ class VasudevaRAG:
         vector_db_dir: str = "vectordb",
         chunk_size: int = 800,
         chunk_overlap: int = 150,
-        model_name: str = "gpt-4o-mini"
+        model_name: str = "gpt-4o-mini",
+        gcs_bucket_name: Optional[str] = None,
+        gcs_project_id: Optional[str] = None
     ):
         """
         Initialize Vasudeva RAG pipeline.
@@ -41,6 +52,8 @@ class VasudevaRAG:
             chunk_size: Size of text chunks
             chunk_overlap: Overlap between chunks
             model_name: OpenAI model name
+            gcs_bucket_name: GCS bucket name for documents (optional)
+            gcs_project_id: GCS project ID (optional)
         """
         self.documents_dir = Path(documents_dir)
         self.vector_db_dir = Path(vector_db_dir)
@@ -48,22 +61,109 @@ class VasudevaRAG:
         self.chunk_overlap = chunk_overlap
         self.model_name = model_name
         
+        # GCS configuration
+        self.gcs_bucket_name = gcs_bucket_name or os.getenv("GCS_BUCKET_NAME")
+        self.gcs_project_id = gcs_project_id or os.getenv("GCS_PROJECT_ID")
+        self.gcs_client = None
+        self._temp_dir = None
+        
         # Initialize components
         self.embeddings = OpenAIEmbeddings()
         self.llm = ChatOpenAI(model_name=model_name, temperature=0.7)
         self.vectorstore = None
         self.qa_chain = None
         
-        # Create vector DB directory if it doesn't exist
+        # Create directories
         self.vector_db_dir.mkdir(exist_ok=True, parents=True)
+        self.documents_dir.mkdir(exist_ok=True, parents=True)
+    
+    def _setup_gcs_client(self) -> None:
+        """Initialize GCS client if credentials available."""
+        if not GCS_AVAILABLE:
+            return
+        
+        try:
+            # Check for service account JSON in environment
+            credentials_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+            if credentials_json:
+                from google.oauth2 import service_account
+                credentials = service_account.Credentials.from_service_account_info(
+                    json.loads(credentials_json)
+                )
+                self.gcs_client = storage.Client(
+                    credentials=credentials,
+                    project=self.gcs_project_id
+                )
+            else:
+                # Use default credentials or anonymous for public buckets
+                self.gcs_client = storage.Client.create_anonymous_client()
+        except Exception as e:
+            print(f"⚠️  Could not initialize GCS client: {e}")
+            self.gcs_client = None
+    
+    def download_documents_from_gcs(self) -> Path:
+        """Download documents from GCS bucket to temporary directory."""
+        if not self.gcs_bucket_name:
+            raise ValueError("GCS bucket name not configured")
+        
+        if not GCS_AVAILABLE:
+            raise ImportError("google-cloud-storage not installed. Run: pip install google-cloud-storage")
+        
+        # Initialize GCS client if needed
+        if self.gcs_client is None:
+            self._setup_gcs_client()
+        
+        # Create temporary directory for downloads
+        if self._temp_dir is None:
+            self._temp_dir = Path(tempfile.mkdtemp(prefix="vasudeva_docs_"))
+        
+        print(f"☁️  Downloading documents from GCS bucket: {self.gcs_bucket_name}")
+        
+        try:
+            bucket = self.gcs_client.bucket(self.gcs_bucket_name)
+            blobs = list(bucket.list_blobs())
+            pdf_blobs = [b for b in blobs if b.name.endswith('.pdf')]
+            
+            if not pdf_blobs:
+                raise ValueError(f"No PDF files found in GCS bucket: {self.gcs_bucket_name}")
+            
+            print(f"📥 Downloading {len(pdf_blobs)} documents...")
+            for blob in pdf_blobs:
+                local_path = self._temp_dir / blob.name
+                print(f"  - Downloading {blob.name} ({blob.size / 1024 / 1024:.1f} MB)")
+                blob.download_to_filename(str(local_path))
+            
+            print(f"✅ Downloaded {len(pdf_blobs)} documents to {self._temp_dir}")
+            return self._temp_dir
+        
+        except Exception as e:
+            raise RuntimeError(f"Failed to download documents from GCS: {e}")
     
     def load_documents(self) -> List[Any]:
-        """Load all wisdom texts from the documents directory."""
+        """Load all wisdom texts from local directory or GCS."""
         documents = []
+        
+        # Check if documents exist locally
         pdf_files = list(self.documents_dir.glob("*.pdf"))
         
         if not pdf_files:
-            raise ValueError(f"No PDF files found in {self.documents_dir}")
+            # Try downloading from GCS
+            if self.gcs_bucket_name:
+                print(f"📂 No local documents found, checking GCS...")
+                try:
+                    docs_dir = self.download_documents_from_gcs()
+                    pdf_files = list(docs_dir.glob("*.pdf"))
+                except Exception as e:
+                    print(f"❌ Failed to download from GCS: {e}")
+                    raise ValueError(
+                        f"No PDF files found locally in {self.documents_dir} "
+                        f"and failed to download from GCS: {e}"
+                    )
+            else:
+                raise ValueError(
+                    f"No PDF files found in {self.documents_dir} "
+                    "and GCS bucket not configured"
+                )
         
         print(f"📚 Loading {len(pdf_files)} wisdom texts...")
         for pdf_file in pdf_files:

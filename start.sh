@@ -39,3 +39,4 @@ echo "Press Ctrl+C to stop all servers"
 # Keep script running
 wait
 
+
