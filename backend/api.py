@@ -9,6 +9,11 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 import uvicorn
 from datetime import datetime
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 from vasudeva_rag import VasudevaRAG
 
@@ -49,6 +54,7 @@ class GuidanceResponse(BaseModel):
     """Response model for guidance"""
     problem: str
     guidance: str
+    story: Optional[Dict[str, Any]] = None
     sources: Optional[List[Dict[str, Any]]] = None
     timestamp: str
     model: str
@@ -58,6 +64,18 @@ class WisdomSearchRequest(BaseModel):
     """Request model for wisdom search"""
     query: str = Field(..., description="Search query")
     k: int = Field(3, description="Number of passages to return", ge=1, le=10)
+
+
+class FeedbackRequest(BaseModel):
+    """Request model for user feedback"""
+    session_id: str = Field(..., description="Session identifier")
+    question: str = Field(..., description="User's original question")
+    guidance: str = Field(..., description="Guidance provided")
+    story: Optional[Dict[str, Any]] = Field(None, description="Story data if provided")
+    vote: str = Field(..., description="upvote or downvote")
+    downvote_reason: Optional[str] = Field(None, description="Reason for downvote")
+    detailed_feedback: Optional[str] = Field(None, description="Additional feedback text")
+    response_time_ms: Optional[int] = Field(None, description="Response time in milliseconds")
 
 
 class HealthResponse(BaseModel):
@@ -74,11 +92,38 @@ async def startup_event():
     global vasudeva
     try:
         print("🚀 Starting Vasudeva API...")
+        
+        # Get GCS configuration from environment
+        gcs_bucket = os.getenv("GCS_BUCKET_NAME")
+        gcs_project = os.getenv("GCS_PROJECT_ID")
+        
         vasudeva = VasudevaRAG(
             documents_dir="../documents",
-            vector_db_dir="../vectordb"
+            vector_db_dir="../vectordb",
+            gcs_bucket_name=gcs_bucket,
+            gcs_project_id=gcs_project
         )
-        vasudeva.build_pipeline()
+        
+        # Force rebuild if vectordb exists but is empty
+        force_rebuild = False
+        if vasudeva.vector_db_dir.exists():
+            print("📊 Checking vectordb status...")
+            try:
+                from pathlib import Path
+                import sqlite3
+                db_path = vasudeva.vector_db_dir / "chroma.sqlite3"
+                if db_path.exists():
+                    conn = sqlite3.connect(str(db_path))
+                    cursor = conn.execute("SELECT COUNT(*) FROM embeddings")
+                    count = cursor.fetchone()[0]
+                    conn.close()
+                    if count == 0:
+                        print("⚠️  Vectordb is empty, forcing rebuild from GCS...")
+                        force_rebuild = True
+            except Exception as e:
+                print(f"⚠️  Could not check vectordb status: {e}")
+        
+        vasudeva.build_pipeline(force_rebuild=force_rebuild)
         print("✅ Vasudeva is ready to serve!")
     except Exception as e:
         print(f"❌ Failed to initialize Vasudeva: {e}")
@@ -112,7 +157,8 @@ async def health_check():
 @app.post("/api/guidance", response_model=GuidanceResponse)
 async def get_guidance(request: ProblemRequest):
     """
-    Get wisdom-based guidance for a problem
+    Get wisdom-based guidance for a problem (FAST - no story)
+    Story is loaded separately via /api/story endpoint
     
     - **problem**: The problem or question you need help with
     - **include_sources**: Whether to include source wisdom texts in response
@@ -121,9 +167,11 @@ async def get_guidance(request: ProblemRequest):
         raise HTTPException(status_code=503, detail="Vasudeva is not initialized")
     
     try:
+        # Get guidance without story (fast response)
         result = vasudeva.get_guidance(
             problem=request.problem,
-            include_sources=request.include_sources
+            include_sources=request.include_sources,
+            skip_story=True  # Skip story for fast response
         )
         
         result["timestamp"] = datetime.now().isoformat()
@@ -131,6 +179,30 @@ async def get_guidance(request: ProblemRequest):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error getting guidance: {str(e)}")
+
+
+@app.post("/api/story")
+async def get_story(request: ProblemRequest):
+    """
+    Get story for a problem (SLOW - with fact-checking)
+    Load this separately after getting guidance
+    
+    - **problem**: The same problem you asked about
+    """
+    if vasudeva is None:
+        raise HTTPException(status_code=503, detail="Vasudeva is not initialized")
+    
+    try:
+        # Get only story (slow with fact-checking)
+        result = vasudeva.get_story_only(
+            problem=request.problem
+        )
+        
+        result["timestamp"] = datetime.now().isoformat()
+        return result
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting story: {str(e)}")
 
 
 @app.post("/api/wellness")
@@ -220,3 +292,37 @@ if __name__ == "__main__":
     )
 
 
+
+
+@app.post("/api/feedback")
+async def submit_feedback(request: FeedbackRequest):
+    """Submit user feedback for continuous improvement"""
+    try:
+        from feedback_utils import classify_question, store_feedback
+        
+        # Classify question
+        classification = classify_question(request.question)
+        
+        # Prepare feedback data
+        feedback_data = {
+            "session_id": request.session_id,
+            "question": request.question,
+            "question_category": classification.get("category", "general"),
+            "question_type": classification.get("type", "general"),
+            "guidance": request.guidance,
+            "story_title": request.story.get("title") if request.story else None,
+            "story_character": request.story.get("character") if request.story else None,
+            "story_source": request.story.get("source") if request.story else None,
+            "vote": request.vote,
+            "downvote_reason": request.downvote_reason,
+            "detailed_feedback": request.detailed_feedback,
+            "response_time_ms": request.response_time_ms
+        }
+        
+        # Store feedback
+        feedback_id = store_feedback(feedback_data)
+        
+        return {"status": "success", "feedback_id": feedback_id, "message": "Thank you for your feedback!"}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error storing feedback: {str(e)}")

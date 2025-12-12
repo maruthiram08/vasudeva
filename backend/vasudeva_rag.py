@@ -214,19 +214,18 @@ class VasudevaRAG:
         if self.vectorstore is None:
             raise ValueError("Vector store not initialized")
         
-        # Wisdom-focused prompt template (Krishna-Arjuna style)
+        # Simplified wisdom prompt - story extraction happens separately
         wisdom_prompt_template = """You are Vasudeva (Krishna), a compassionate divine guide who provides wisdom to seekers.
 
 A person (your dear friend) has come to you seeking guidance. Like Krishna teaching Arjuna, you address them as "Partha" and share profound wisdom with compassion.
 
 Guidelines:
-1. ALWAYS begin your response with "Partha," or "Dear Partha," (just like Krishna addresses Arjuna)
+1. ALWAYS begin your response with "Dear Partha," or "Partha,"
 2. Be empathetic and understanding of their situation
 3. Draw insights from the wisdom texts provided
 4. Offer practical advice they can apply to their life
-5. If the texts don't directly address the issue, provide general wisdom that could help improve their mental state
-6. Maintain a supportive, non-judgmental, wise tone like Krishna
-7. Keep responses meaningful but not too long (3-6 sentences)
+5. Maintain a supportive, non-judgmental, wise tone like Krishna
+6. Keep responses meaningful but not too long (3-6 sentences)
 
 Sacred Wisdom from the Texts:
 {context}
@@ -234,7 +233,7 @@ Sacred Wisdom from the Texts:
 Partha's Problem:
 {question}
 
-Your Guidance (as Vasudeva/Krishna - remember to address them as "Partha"):"""
+Your Guidance (as Vasudeva/Krishna):"""
         
         WISDOM_PROMPT = PromptTemplate(
             template=wisdom_prompt_template,
@@ -272,7 +271,8 @@ Your Guidance (as Vasudeva/Krishna - remember to address them as "Partha"):"""
     def get_guidance(
         self, 
         problem: str, 
-        include_sources: bool = True
+        include_sources: bool = True,
+        skip_story: bool = False  # NEW: Skip story for fast response
     ) -> Dict[str, Any]:
         """
         Get wisdom-based guidance for a problem.
@@ -280,21 +280,48 @@ Your Guidance (as Vasudeva/Krishna - remember to address them as "Partha"):"""
         Args:
             problem: The user's problem or question
             include_sources: Whether to include source texts
+            skip_story: If True, skip story extraction for faster response
             
         Returns:
-            Dictionary with guidance and sources
+            Dictionary with guidance, story (if applicable), and sources
         """
         if self.qa_chain is None:
             raise ValueError("QA chain not initialized. Run build_pipeline() first.")
         
         print(f"🤔 Seeking wisdom for: {problem[:100]}...")
+        
+        # Step 1: Get wisdom guidance
         result = self.qa_chain.invoke({"query": problem})
+        guidance_text = result["result"]
+        
+        # Step 2: Try to extract a relevant story from the retrieved context
+        story_data = None
+        if not skip_story and "source_documents" in result and len(result["source_documents"]) > 0:
+            story_data = self._extract_story_from_context(
+                problem=problem,
+                source_documents=result["source_documents"]
+            )
+            print(f"📚 Story data returned: {story_data is not None}")
+            
+            # Step 3: Convert STAR to narrative story with parallels
+            if story_data:
+                story_data = self._convert_to_narrative_story(
+                    story_data=story_data,
+                    user_problem=problem,
+                    source_passages=result["source_documents"][:3]  # Pass actual passages
+                )
+                print(f"📖 Story converted to narrative: {story_data.get('character', 'N/A')}")
+        elif skip_story:
+            print("⏩ Skipping story extraction for fast response")
         
         response = {
             "problem": problem,
-            "guidance": result["result"],
+            "guidance": guidance_text,
+            "story": story_data,
             "model": self.model_name
         }
+        
+        print(f"📦 Response has story: {response.get('story') is not None}")
         
         if include_sources and "source_documents" in result:
             response["sources"] = []
@@ -307,6 +334,391 @@ Your Guidance (as Vasudeva/Krishna - remember to address them as "Partha"):"""
                 response["sources"].append(source_info)
         
         return response
+    
+    def get_story_only(
+        self,
+        problem: str
+    ) -> Dict[str, Any]:
+        """
+        Get ONLY the story for a problem (for async loading).
+        This is slow due to fact-checking but allows guidance to load first.
+        
+        Args:
+            problem: The user's problem (same as used for guidance)
+            
+        Returns:
+            Dictionary with story data
+        """
+        if self.qa_chain is None:
+            raise ValueError("QA chain not initialized. Run build_pipeline() first.")
+        
+        print(f"📖 Getting story for: {problem[:100]}...")
+        
+        # Get relevant documents
+        result = self.qa_chain.invoke({"query": problem})
+        
+        story_data = None
+        if "source_documents" in result and len(result["source_documents"]) > 0:
+            # Extract story using STAR
+            story_data = self._extract_story_from_context(
+                problem=problem,
+                source_documents=result["source_documents"]
+            )
+            
+            # Convert to narrative with fact-checking
+            if story_data:
+                story_data = self._convert_to_narrative_story(
+                    story_data=story_data,
+                    user_problem=problem,
+                    source_passages=result["source_documents"][:3]
+                )
+                print(f"✅ Story ready: {story_data.get('title', 'Untitled')}")
+        
+        return {
+            "problem": problem,
+            "story": story_data,
+            "model": self.model_name
+        }
+    
+    def _extract_story_from_context(
+        self,
+        problem: str,
+        source_documents: List[Any]
+    ) -> Optional[Dict[str, str]]:
+        """
+        Extract a relevant story from source documents using STAR framework.
+        
+        Args:
+            problem: The user's problem
+            source_documents: Retrieved wisdom passages
+            
+        Returns:
+            Story in STAR format or None
+        """
+        # Combine top passages
+        context = "\n\n---\n\n".join([
+            doc.page_content for doc in source_documents[:3]
+        ])
+        
+        # OPTION 4: Document Verification - Check if passages have sufficient content
+        total_chars = sum(len(doc.page_content) for doc in source_documents[:3])
+        if total_chars < 200:  # Too short, likely no actual story
+            print("⚠️  Passages too short for story extraction (< 200 chars), skipping")
+            return None
+        
+        # Check if passages contain narrative elements
+        narrative_keywords = ['was', 'were', 'said', 'asked', 'went', 'came', 'once', 
+                             'time', 'day', 'king', 'sage', 'lord', 'god', 'goddess',
+                             'then', 'when', 'there']
+        if not any(keyword in context.lower() for keyword in narrative_keywords):
+            print("⚠️  Passages lack narrative elements, skipping story")
+            return None
+        
+        story_prompt = f"""Based on these sacred text passages, extract a relevant story if one exists.
+
+Sacred Text Passages:
+{context}
+
+User's Problem: {problem}
+
+Task: If these passages describe a story, character, or specific instance relevant to the problem, extract it using STAR framework.
+
+Respond in JSON format:
+{{
+  "found": true/false,
+  "title": "Short, apt title for the story (e.g., 'Arjuna's Dilemma on the Battlefield')",
+  "situation": "The context and dilemma faced",
+  "task": "What needed to be addressed",
+  "action": "What was done",
+  "result": "The outcome and lesson",
+  "source": "Detailed source with book, canto/chapter, verse (e.g., 'Srimad Bhagavatam, Canto 3, Chapter 15, Verse 33')",
+  "character": "Main character name"
+}}
+
+IMPORTANT FOR SOURCE:
+- Include book name (Bhagavad Gita, Srimad Bhagavatam, etc.)
+- Include canto/chapter numbers if mentioned in passages
+- Include verse numbers if available
+- Example: "Bhagavad Gita, Chapter 2, Verse 7"
+- Example: "Srimad Bhagavatam, Canto 10, Chapter 3"
+
+If NO clear story exists in the passages, return: {{"found": false}}
+
+Your JSON response:"""
+        
+        try:
+            # Use a simpler LLM call for story extraction
+            from langchain.schema import HumanMessage
+            
+            story_llm = ChatOpenAI(
+                model_name="gpt-4o-mini",
+                temperature=0.3,
+                model_kwargs={"response_format": {"type": "json_object"}}
+            )
+            
+            response = story_llm.invoke([HumanMessage(content=story_prompt)])
+            story_json = json.loads(response.content)
+            
+            if story_json.get("found"):
+                # Remove the 'found' key and return the story
+                story_json.pop("found", None)
+                print(f"📖 Story extracted: {story_json.get('character', 'Unknown')}")
+                return story_json
+            else:
+                print("ℹ️  No specific story found in context")
+                return None
+                
+        except Exception as e:
+            print(f"⚠️  Could not extract story: {e}")
+            return None
+    
+    def _convert_to_narrative_story(
+        self,
+        story_data: Dict[str, str],
+        user_problem: str,
+        source_passages: List[Any]
+    ) -> Dict[str, Any]:
+        """
+        Convert STAR framework story into a narrative format with fact-checking.
+        Uses hybrid approach: generate → fact-check → regenerate if needed.
+        
+        Args:
+            story_data: Story in STAR format
+            user_problem: User's problem to draw parallels
+            source_passages: Original text passages from sacred texts
+            
+        Returns:
+            Story with narrative field added
+        """
+        # Include actual passages to keep narrative grounded
+        passages_text = "\n\n---\n\n".join([
+            doc.page_content for doc in source_passages
+        ])
+        
+        # Step 1: Generate initial narrative
+        print("📝 Generating narrative...")
+        narrative_v1 = self._generate_narrative(
+            story_data, user_problem, passages_text
+        )
+        
+        # Step 2: Fact-check against passages
+        print("🔍 Fact-checking narrative...")
+        fact_check_result = self._fact_check_narrative(narrative_v1, passages_text)
+        
+        # Step 3: Regenerate with feedback if issues found
+        if fact_check_result.get("has_issues"):
+            issues = fact_check_result.get("issues", [])
+            print(f"⚠️  Found {len(issues)} accuracy issues, regenerating...")
+            for issue in issues:
+                print(f"   - {issue.get('detail')}: {issue.get('reason')}")
+            
+            narrative_final = self._regenerate_with_feedback(
+                narrative_v1, issues, passages_text, story_data, user_problem
+            )
+            print("✅ Narrative corrected")
+        else:
+            print("✅ Narrative accurate")
+            narrative_final = narrative_v1
+        
+        # Add narrative to story data
+        story_data["narrative"] = narrative_final
+        return story_data
+    
+    def _generate_narrative(
+        self,
+        story_data: Dict[str, str],
+        user_problem: str,
+        passages_text: str
+    ) -> str:
+        """Generate initial narrative from STAR elements."""
+        
+        narrative_prompt = f"""Create a simple story ONLY from what these passages actually say.
+
+ORIGINAL SACRED TEXT PASSAGES:
+{passages_text}
+
+Story Elements (STAR Framework):
+- Character: {story_data.get('character', 'Unknown')}
+- Situation: {story_data.get('situation', '')}
+- Source: {story_data.get('source', '')}
+
+Reader's Problem: {user_problem}
+
+STRICT RULES - WHAT YOU CAN DO:
+1. Use ONLY facts explicitly stated in passages
+2. Quote or paraphrase actual text from passages
+3. Use simple, everyday language
+4. Draw connection to reader's problem at the end
+
+ABSOLUTE PROHIBITIONS - NEVER ADD:
+❌ Divine characters NOT mentioned in passages (e.g., "Lord Dharma", "Lord of righteousness")
+❌ Symbolic interpretations (e.g., "Earth spoke", divine light)  
+❌ Emotional motivations NOT in passages (e.g., "to heal grief")
+❌ Modern therapeutic angles (e.g., "coping with loss")
+❌ Spiritual symbolism not in original text
+❌ Proper nouns (people, places, deities) not in passages
+❌ Conversations/dialogue not in passages
+❌ Events not described in passages
+
+CRITICAL: If passages don't mention something, DON'T include it.
+Better to have an incomplete but accurate story than a complete but fabricated one.
+
+FORMAT:
+- 2-3 paragraphs
+- Start with what passages say about the character/situation
+- Tell what actually happened (only from passages)
+- End with simple parallel to reader's situation
+
+Your fact-based narrative:"""
+        
+        try:
+            from langchain.schema import HumanMessage
+            
+            narrative_llm = ChatOpenAI(
+                model_name="gpt-4o-mini",
+                temperature=0.3  # Lower temperature for less creativity
+            )
+            
+            response = narrative_llm.invoke([HumanMessage(content=narrative_prompt)])
+            return response.content.strip()
+            
+        except Exception as e:
+            print(f"⚠️  Could not create narrative: {e}")
+            # Fallback: create simple narrative from STAR
+            return f"{story_data.get('situation', '')} {story_data.get('action', '')} {story_data.get('result', '')}"
+    
+    def _fact_check_narrative(
+        self,
+        narrative: str,
+        passages_text: str
+    ) -> Dict[str, Any]:
+        """Fact-check narrative against original passages."""
+        
+        check_prompt = f"""You are a strict fact-checker for sacred text stories.
+
+ORIGINAL PASSAGES FROM SACRED TEXTS:
+{passages_text}
+
+GENERATED NARRATIVE:
+{narrative}
+
+Task: Find ANY details in the narrative that are NOT explicitly in the original passages.
+
+CRITICAL CHECKS - Flag if narrative contains:
+
+1. **Invented Characters/Deities**:
+   - Divine figures not named in passages (e.g., "Lord Dharma", "Lord of righteousness")
+   - Entities like "Earth spoke", "gods appeared" if not in text
+   
+2. **Fabricated Events**:
+   - Events not described in passages
+   - Actions characters didn't take
+   - Timeline issues (e.g., child present when not born yet)
+   
+3. **Added Dialogue**:
+   - Quotes/conversations not in passages
+   - "Said", "spoke", "told" if dialogue not in text
+   
+4. **Conceptual Inventions**:
+   - Symbolic interpretations not in passages (e.g., divine light, spiritual symbolism)
+   - Emotional motivations not stated (e.g., "to heal grief" when text says "to fulfill duty")
+   - Modern therapeutic angles (e.g., "coping mechanism", "emotional recovery")
+   
+5. **Thematic Reinterpretations**:
+   - Changing the purpose/meaning of events
+   - Adding spiritual lessons not in text
+   - Modernizing the message beyond text
+
+IMPORTANT: 
+- Be STRICT - flag anything not explicitly in passages
+- Conceptual additions are as bad as factual errors
+- Proper nouns (names, places) must be in passages
+
+Respond in JSON:
+{{
+  "has_issues": true/false,
+  "issues": [
+    {{"detail": "specific fabrication", "reason": "why it's not in passages", "type": "character/event/dialogue/conceptual"}},
+    ...
+  ]
+}}
+
+Your fact-check:"""
+        
+        try:
+            from langchain.schema import HumanMessage
+            
+            fact_check_llm = ChatOpenAI(
+                model_name="gpt-4o-mini",
+                temperature=0,
+                model_kwargs={"response_format": {"type": "json_object"}}
+            )
+            
+            response = fact_check_llm.invoke([HumanMessage(content=check_prompt)])
+            return json.loads(response.content)
+            
+        except Exception as e:
+            print(f"⚠️  Fact-check failed: {e}")
+            return {"has_issues": False, "issues": []}
+    
+    def _regenerate_with_feedback(
+        self,
+        original_narrative: str,
+        issues: List[Dict],
+        passages_text: str,
+        story_data: Dict[str, str],
+        user_problem: str
+    ) -> str:
+        """Regenerate narrative fixing specific issues."""
+        
+        issues_list = "\n".join([
+            f"- {issue.get('detail', 'Unknown')}: {issue.get('reason', '')}" 
+            for issue in issues
+        ])
+        
+        regen_prompt = f"""Your previous narrative had accuracy issues. Please fix them.
+
+ORIGINAL PASSAGES FROM SACRED TEXTS:
+{passages_text}
+
+PREVIOUS NARRATIVE (with issues):
+{original_narrative}
+
+ISSUES FOUND - YOU MUST FIX THESE:
+{issues_list}
+
+Story Elements (STAR):
+- Character: {story_data.get('character')}
+- Situation: {story_data.get('situation')}
+- Action: {story_data.get('action')}
+- Result: {story_data.get('result')}
+
+Reader's Problem: {user_problem}
+
+Task: Rewrite the narrative:
+1. REMOVE or FIX each issue listed above
+2. Use ONLY details explicitly in passages
+3. If timeline is unclear, be vague rather than fabricate
+4. Keep warm, simple style
+5. Draw parallels to reader's problem
+6. 3-4 paragraphs
+
+Your corrected narrative:"""
+        
+        try:
+            from langchain.schema import HumanMessage
+            
+            regen_llm = ChatOpenAI(
+                model_name="gpt-4o-mini",
+                temperature=0.5
+            )
+            
+            response = regen_llm.invoke([HumanMessage(content=regen_prompt)])
+            return response.content.strip()
+            
+        except Exception as e:
+            print(f"⚠️  Regeneration failed: {e}")
+            return original_narrative  # Fallback to original if regen fails
     
     def get_relevant_wisdom(self, query: str, k: int = 3) -> List[Dict[str, Any]]:
         """

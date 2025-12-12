@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Vasudeva Project Whitepaper</title>
+  <style>
+    body {font-family: Arial, sans-serif; line-height: 1.6; margin: 2rem;}
+    h1, h2, h3, h4 {color: #2c3e50;}
+    pre {background:#f4f4f4; padding:1rem; overflow:auto;}
+    code {background:#eaeaea; padding:2px 4px;}
+    .mermaid {margin: 1rem 0;}
+  </style>
+</head>
+<body>
+<h1>Vasudeva: AI Wisdom Guidance System</h1>
+<h2>Project Whitepaper &amp; Technical Interaction Design</h2>
+<p><strong>Executive Summary</strong><br>
+Vasudeva is a specialized Wisdom Guidance System designed to provide mental wellness support grounded in authentic sacred texts. Unlike generic AI models that often hallucinate or provide superficial advice, Vasudeva uses a rigorous RAG (Retrieval‑Augmented Generation) architecture reinforced by a custom Evaluation System to verify Truth. It addresses the critical need for ethical, verifiable AI in sensitive domains.</p>
+<hr/>
+<h2>User Journey: The "Digital Darshan"</h2>
+<p>From Confusion to Illumination in 3 Steps</p>
+<pre class="mermaid">
+graph LR
+    A[Expression] --&gt;|User speaks/types problem| B[Guidance]
+    B --&gt;|Compassionate, actionable advice| C[Illumination]
+    C --&gt;|Authentic, metaphorical story| D[Clarity]
+    style A fill:#f9f,stroke:#333
+    style B fill:#bbf,stroke:#333
+    style C fill:#bfb,stroke:#333
+    style D fill:#fff,stroke:#333
+</pre>
+<hr/>
+<h2>DEEP DIVE: The "Life of a Query"</h2>
+<p>What happens in the 3 seconds after you press 'Send'?</p>
+<p>To ensure instant help while performing deep research, we split the process into two phases.</p>
+<h3>Phase 1: Immediate Guidance (0‑3s)</h3>
+<p>Goal: Instant psychological relief and answer.</p>
+<pre class="mermaid">
+sequenceDiagram
+    participant User
+    participant UI as Frontend
+    participant API as Backend
+    participant Brain as LLM (GPT-4o)
+    participant DB as Vector Store
+
+    User-&gt;&gt;UI: "I feel betrayed by my brother"
+    UI-&gt;&gt;API: POST /guidance
+    
+    Note over API, Brain: SEMANTIC RETRIEVAL
+    API-&gt;&gt;DB: Search ("Betrayal", "Brother")
+    DB--&gt;&gt;API: Returns: Karna &amp; Vibhishana chunks
+    
+    Note over API, Brain: SYNTHESIS
+    API-&gt;&gt;Brain: Synthesize Guidance
+    Brain--&gt;&gt;API: Stream tokens...
+    API--&gt;&gt;UI: Streaming Response
+    UI--&gt;&gt;User: User starts reading advice
+</pre>
+<p><strong>Detailed Process Description:</strong></p>
+<ol>
+<li>User Input: The user expresses a complex emotion.</li>
+<li>Vector Embedding: The text is turned into a 1536‑dimensional vector.</li>
+<li>Semantic Search: ChromaDB returns relevant wisdom chunks.</li>
+<li>Synthesis: LLM combines the query with retrieved passages.</li>
+<li>Streaming Response: Tokens are streamed back, first word appears within ~800 ms.</li>
+</ol>
+<h3>Phase 2: Deep Background Processing</h3>
+<p>Goal: Verifiable Truth &amp; Narrative Depth (Async).</p>
+<pre class="mermaid">
+sequenceDiagram
+    participant UI as Frontend
+    participant API as Backend
+    participant Brain as LLM
+    participant Critic as Fact‑Checker
+    participant DB as Vector Store
+
+    Note over API: Triggers after Phase 1 response
+    API-&gt;&gt;Brain: Extract "STAR" Narrative
+    Brain-&gt;&gt;Critic: Generated Story Draft
+    
+    Note over Critic: HYBRID VERIFICATION
+    Critic-&gt;&gt;DB: Check Names &amp; Events
+    
+    alt Hallucination Detected?
+        Critic-&gt;&gt;Brain: ❌ Reject (Name not found)
+        Brain-&gt;&gt;Critic: NEW Draft (Corrected)
+    else Verified
+        Critic--&gt;&gt;API: ✅ Approved Story
+    end
+    
+    API--&gt;&gt;UI: Push Story Object
+    Note over UI: Story Card "Fades In" to UI
+</pre>
+<p><strong>Detailed Process Description:</strong></p>
+<ol>
+<li>Narrative Extraction: LLM finds a complete story matching the user's situation.</li>
+<li>STAR Formatting: Story is forced into Situation‑Task‑Action‑Result.</li>
+<li>Critic Loop: Fact‑Checker validates every entity against the source PDF.</li>
+<li>Self‑Correction: If a hallucination is found, the LLM regenerates.</li>
+<li>Fade‑In Delivery: Only verified stories reach the UI.</li>
+</ol>
+<hr/>
+<h2>System Architecture</h2>
+<pre class="mermaid">
+graph TD
+    Client[Client Device] &lt;--|Sends: Voice/Text Input <br/> Receives: Streaming Audio &amp; UI| FE[React Frontend]
+    FE &lt;--|Sends: Async Payload <br/> Receives: JSON Streams &amp; SSE| BE[FastAPI Cluster]
+    
+    subgraph "Core Intelligence"
+        BE &lt;--|Invokes Pipeline| LC[LangChain Orchestrator]
+        LC &lt;--|Sends: System Prompt + Context <br/> Receives: Generated Tokens| Models[GPT-4o-mini]
+        LC &lt;--|Sends: 1536‑dim Vector <br/> Receives: Top‑k Knowledge Chunks| Vectors[(ChromaDB)]
+    end
+    
+    subgraph "Truth &amp; Quality"
+        BE &lt;--|Sends: Draft Narrative <br/> Receives: Verification Result| Evals[Hybrid Fact‑Checker]
+        BE --&gt;|Writes: Conversation Logs| GCS[Document Lake]
+    end
+</pre>
+<hr/>
+<h2>DEEP DIVE: The AI Evaluation System ("The Quality Gate")</h2>
+<p>Trust through Verification.</p>
+<p>We have engineered a comprehensive Evaluation Suite consisting of 22 automated tests that run before any deployment. This measures Hallucinations, Toxicity, and Correctness.</p>
+<h3>5.1. Evals Logic Flow</h3>
+<pre class="mermaid">
+flowchart TD
+    Push[Developer Updates Prompt] --> CI[CI Pipeline]
+    CI --> TestSuite{Run 22 Tests}
+    
+    TestSuite -->|Test 1| H[Hallucination Check]
+    TestSuite -->|Test 2| T[Toxicity Check]
+    TestSuite -->|Test 3| F[Factuality Check]
+    
+    H -->|Fail: 'Lord Dharma' found| Block[❌ BLOCK DEPLOY]
+    T -->|Fail: 'Just pray' found| Block
+    F -->|Pass| Success[✅ APPROVE]
+    
+    Success --> Deploy[Deploy to Production]
+</pre>
+<p><strong>Detailed Process Description:</strong></p>
+<ol>
+<li>Trigger: A developer updates the system.</li>
+<li>The CI/CD pipeline runs the suite of 22 tests.</li>
+<li>Specific Checks: Hallucination, Toxicity, Factuality, etc.</li>
+<li>Gate: Any failure blocks deployment; only 100 % pass proceeds.</li>
+</ol>
+<hr/>
+<h2>The "Virtuous Cycle": How the System Evolves</h2>
+<p>Turning User Feedback into Permanent Intelligence.</p>
+<pre class="mermaid">
+graph TD
+    subgraph "Interaction"
+        U[User] --&gt;|Receives Answer| R[Response]
+        R --&gt;|Click 'Not Helpful'| F[Feedback Form]
+        F --&gt;|Select 'Inaccurate'| D[Data Log]
+    end
+    
+    subgraph "Improvement Loop"
+        D --&gt;|Aggregated| A[Analytics Dashboard]
+        A --&gt;|Human Review| E[Engineer]
+        E --&gt;|Create New Test| T[New Eval Case]
+        T --&gt;|Update Prompts| P[Prompt Engineering]
+        P --&gt;|Validate| V[Run All Evals]
+    end
+    
+    V --&gt;|Pass| U
+    
+    style U fill:#f9f,stroke:#333
+    style D fill:#f96,stroke:#333
+    style T fill:#9f9,stroke:#333
+</pre>
+<p><strong>Detailed Process Description:</strong></p>
+<ol>
+<li>The user flags a response as not helpful.</li>
+<li>The system logs the conversation ID, context, and reason.</li>
+<li>An engineer reviews the log and creates a new test case to prevent the error.</li>
+<li>Prompt engineering and the test suite are updated.</li>
+<li>The full eval suite validates the fix before the next release.</li>
+</ol>
+<hr/>
+<h2>Tech Stack &amp; Toolkit</h2>
+<table>
+<tr><th>Layer</th><th>Technology</th><th>Purpose</th></tr>
+<tr><td>Frontend</td><td>React + Vite</td><td>Instant interactions, Skeleton loading states</td></tr>
+<tr><td>Styling</td><td>Tailwind + Framer</td><td>"Glassmorphism" aesthetic, emotional animations</td></tr>
+<tr><td>Backend</td><td>FastAPI</td><td>AsyncIO for handling parallel LLM requests</td></tr>
+<tr><td>AI Logic</td><td>LangChain</td><td>Chain‑of‑Thought reasoning &amp; retrieval orchestration</td></tr>
+<tr><td>Memory</td><td>ChromaDB</td><td>Semantic search (understanding concepts vs keywords)</td></tr>
+<tr><td>Intelligence</td><td>GPT‑4o‑mini</td><td>Low‑latency reasoning engine</td></tr>
+<tr><td>Quality</td><td>Custom Evals (Python)</td><td>Deterministic quality gates</td></tr>
+</table>
+<hr/>
+<h2>Why Vasudeva? (Differentiation)</h2>
+<table>
+<tr><th>Generic Chatbot</th><th>Vasudeva System</th></tr>
+<tr><td>Hallucinates to please user</td><td>Self‑Corrects before responding</td></tr>
+<tr><td>"Black Box" reasoning</td><td>Traceable Sources (Book/Verse)</td></tr>
+<tr><td>Static knowledge</td><td>Self‑Healing via Feedback Loop</td></tr>
+<tr><td>Generic tone</td><td>Curated Compassionate Persona</td></tr>
+</table>
+<hr/>
+<p><strong>Summary for Board:</strong> Vasudeva is a Self‑Correcting, Truth‑Anchored Intelligence Platform. It leverages GenAI for accessibility but relies on architectural rigor for accuracy.</p>
+</body>
+</html>

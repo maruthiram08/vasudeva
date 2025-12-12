@@ -43,11 +43,21 @@ export const vasudevaAPI = {
     return response.data;
   },
 
-  // Get guidance for a problem
-  getGuidance: async (problem, includeSources = true) => {
+  // Get guidance for a problem (FAST - no story)
+  getGuidance: async (problem, includeSources = false) => {
     const response = await api.post('/api/guidance', {
       problem,
       include_sources: includeSources,
+    });
+    return response.data;
+  },
+
+  // Get story for a problem (SLOW - with fact-checking)
+  getStory: async (problem) => {
+    const response = await api.post('/api/story', {
+      problem,
+    }, {
+      timeout: 60000  // 60 seconds for story with fact-checking
     });
     return response.data;
   },
@@ -73,6 +83,12 @@ export const vasudevaAPI = {
   // Get stats
   getStats: async () => {
     const response = await api.get('/api/stats');
+    return response.data;
+  },
+
+  // Submit feedback
+  submitFeedback: async (feedbackData) => {
+    const response = await api.post('/api/feedback', feedbackData);
     return response.data;
   },
 };

@@ -1,24 +1,30 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { vasudevaAPI } from './api';
-import { 
-  Sparkles, 
-  Send, 
-  BookOpen, 
-  Heart, 
+import {
+  Sparkles,
+  Send,
+  BookOpen,
+  Heart,
   Loader2,
   CheckCircle2,
   AlertCircle,
   ChevronDown,
   ChevronUp,
   Mic,
-  MicOff
+  MicOff,
+  Users,
+  Target,
+  Zap,
+  Award
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import FeedbackButtons from './components/FeedbackButtons';
 
 function App() {
   const [problem, setProblem] = useState('');
   const [guidance, setGuidance] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [storyLoading, setStoryLoading] = useState(false);  // NEW: Story loading state
   const [error, setError] = useState(null);
   const [showSources, setShowSources] = useState(false);
   const [apiStatus, setApiStatus] = useState('checking');
@@ -35,7 +41,7 @@ function App() {
   const initializeSpeechRecognition = () => {
     // Check if browser supports Speech Recognition
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    
+
     if (!SpeechRecognition) {
       setSpeechSupported(false);
       console.warn('Speech recognition not supported in this browser');
@@ -77,7 +83,7 @@ function App() {
     recognition.onerror = (event) => {
       console.error('Speech recognition error:', event.error);
       setIsListening(false);
-      
+
       if (event.error === 'no-speech') {
         setError('No speech detected. Please try again.');
       } else if (event.error === 'not-allowed') {
@@ -124,7 +130,7 @@ function App() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
     if (!problem.trim()) {
       setError('Please describe your problem');
       return;
@@ -138,16 +144,36 @@ function App() {
     setLoading(true);
     setError(null);
     setGuidance(null);
+    setStoryLoading(false);
 
     try {
-      const result = await vasudevaAPI.getGuidance(problem, true);
-      setGuidance(result);
+      // Step 1: Load guidance FAST (3-5s, no story)
+      const guidanceResult = await vasudevaAPI.getGuidance(problem, false);
+      setGuidance(guidanceResult);
+      setLoading(false);
+
+      // Step 2: Load story SLOWLY in background (30-40s with fact-checking)
+      setStoryLoading(true);
+      try {
+        const storyResult = await vasudevaAPI.getStory(problem);
+        if (storyResult.story) {
+          // Update guidance with story
+          setGuidance(prev => ({
+            ...prev,
+            story: storyResult.story
+          }));
+        }
+      } catch (storyErr) {
+        console.error('Story loading failed:', storyErr);
+        // Story failed, but guidance already loaded - graceful degradation
+      } finally {
+        setStoryLoading(false);
+      }
     } catch (err) {
       setError(
-        err.response?.data?.detail || 
+        err.response?.data?.detail ||
         'Failed to get guidance. Please try again.'
       );
-    } finally {
       setLoading(false);
     }
   };
@@ -163,7 +189,7 @@ function App() {
     <div className="min-h-screen py-8 px-4 sm:px-6 lg:px-8">
       <div className="max-w-4xl mx-auto">
         {/* Header */}
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
           className="text-center mb-12"
@@ -177,7 +203,7 @@ function App() {
           <p className="text-xl text-gray-600 font-light">
             Ancient Wisdom for Modern Problems
           </p>
-          
+
           {/* Status indicator */}
           <div className="mt-4 flex items-center justify-center gap-2">
             {apiStatus === 'online' ? (
@@ -200,7 +226,7 @@ function App() {
         </motion.div>
 
         {/* Main Card */}
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: 0.2 }}
@@ -210,14 +236,14 @@ function App() {
             /* Input Form */
             <form onSubmit={handleSubmit}>
               <div className="mb-6">
-                <label 
-                  htmlFor="problem" 
+                <label
+                  htmlFor="problem"
                   className="block text-lg font-medium text-gray-700 mb-3 flex items-center gap-2"
                 >
                   <Heart className="w-5 h-5 text-orange-500" />
                   What's troubling you?
                 </label>
-                
+
                 <div className="relative">
                   <textarea
                     id="problem"
@@ -231,17 +257,17 @@ function App() {
                     onChange={(e) => setProblem(e.target.value)}
                     disabled={loading || apiStatus === 'offline'}
                   />
-                  
+
                   {/* Voice Input Button */}
                   <button
                     type="button"
                     onClick={toggleListening}
                     disabled={loading || apiStatus === 'offline'}
                     className={`absolute right-3 bottom-3 p-3 rounded-full transition-all duration-200
-                              ${isListening 
-                                ? 'bg-red-500 hover:bg-red-600 animate-pulse' 
-                                : 'bg-orange-500 hover:bg-orange-600'
-                              } text-white shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed`}
+                              ${isListening
+                        ? 'bg-red-500 hover:bg-red-600 animate-pulse'
+                        : 'bg-orange-500 hover:bg-orange-600'
+                      } text-white shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed`}
                     title={isListening ? 'Stop recording' : 'Click to speak'}
                   >
                     {isListening ? (
@@ -251,7 +277,7 @@ function App() {
                     )}
                   </button>
                 </div>
-                
+
                 <div className="flex items-center justify-between mt-2">
                   <p className="text-sm text-gray-500">
                     {problem.length} characters (minimum 10 required)
@@ -263,7 +289,7 @@ function App() {
                     </p>
                   )}
                 </div>
-                
+
                 {/* Voice Recording Indicator */}
                 {isListening && (
                   <motion.div
@@ -297,7 +323,7 @@ function App() {
               </div>
 
               {error && (
-                <motion.div 
+                <motion.div
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
                   className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3"
@@ -316,7 +342,7 @@ function App() {
                 >
                   {/* Shimmer effect background */}
                   <div className="absolute inset-0 animate-shimmer" />
-                  
+
                   <div className="relative flex flex-col items-center gap-6">
                     {/* Multiple Book Pages Stacked */}
                     <div className="relative w-32 h-32">
@@ -343,7 +369,7 @@ function App() {
                           </div>
                         </motion.div>
                       ))}
-                      
+
                       {/* Sparkles around books */}
                       {[
                         { top: -2, right: -2, delay: 0 },
@@ -387,7 +413,7 @@ function App() {
                           Vasudeva is consulting the ancient texts...
                         </h3>
                       </motion.div>
-                      
+
                       <motion.div
                         animate={{
                           opacity: [0.6, 0.9, 0.6]
@@ -404,7 +430,7 @@ function App() {
                           <span className="text-orange-700 font-medium">Please be patient 🙏</span>
                         </p>
                       </motion.div>
-                      
+
                       {/* Page numbers flipping */}
                       <div className="flex items-center justify-center gap-2 text-xs text-orange-500">
                         <span>Page</span>
@@ -421,7 +447,7 @@ function App() {
                           {Math.floor(Math.random() * 999) + 1}
                         </motion.span>
                       </div>
-                      
+
                       {/* Animated dots */}
                       <div className="flex justify-center gap-1.5">
                         {[0, 1, 2, 3, 4].map((i) => (
@@ -479,7 +505,9 @@ function App() {
                   <p className="text-gray-700 italic">"{guidance.problem}"</p>
                 </div>
 
-                {/* Guidance */}
+
+
+                {/* Guidance - SHOWN FIRST (Loads Fast ~5s) */}
                 <div className="mb-6">
                   <h3 className="text-lg font-semibold text-orange-600 mb-4 flex items-center gap-2">
                     <Sparkles className="w-5 h-5" />
@@ -491,6 +519,94 @@ function App() {
                     </p>
                   </div>
                 </div>
+
+                {/* Story sections below load asynchronously */}
+                {/* Story Skeleton Loading */}
+                {storyLoading && !guidance.story && (
+                  <div className="mb-6">
+                    <h3 className="text-lg font-semibold text-purple-600 mb-4 flex items-center gap-2">
+                      <BookOpen className="w-5 h-5" />
+                      A Story from the Sacred Texts
+                    </h3>
+
+                    <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl p-6 border-2 border-purple-200 animate-pulse">
+                      {/* Skeleton Header */}
+                      <div className="pb-4 mb-4 border-b border-purple-200">
+                        <div className="flex items-start gap-2 mb-3">
+                          <div className="w-5 h-5 bg-purple-300 rounded-full"></div>
+                          <div className="flex-1">
+                            <div className="h-5 bg-purple-300 rounded w-2/3 mb-2"></div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="w-4 h-4 bg-purple-300 rounded"></div>
+                          <div className="h-4 bg-purple-300 rounded w-1/2"></div>
+                        </div>
+                      </div>
+
+                      {/* Skeleton Content - 3 paragraphs */}
+                      <div className="space-y-3">
+                        <div className="space-y-2">
+                          <div className="h-4 bg-purple-200 rounded w-full"></div>
+                          <div className="h-4 bg-purple-200 rounded w-full"></div>
+                          <div className="h-4 bg-purple-200 rounded w-4/5"></div>
+                        </div>
+                        <div className="space-y-2">
+                          <div className="h-4 bg-purple-200 rounded w-full"></div>
+                          <div className="h-4 bg-purple-200 rounded w-full"></div>
+                          <div className="h-4 bg-purple-200 rounded w-3/4"></div>
+                        </div>
+                        <div className="space-y-2">
+                          <div className="h-4 bg-purple-200 rounded w-full"></div>
+                          <div className="h-4 bg-purple-200 rounded w-5/6"></div>
+                        </div>
+                      </div>
+
+                      {/* Finding text */}
+                      <div className="mt-4 flex items-center justify-center gap-2 text-purple-600 text-sm">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Finding a relevant story...</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {guidance.story && guidance.story.narrative && (
+                  <div className="mb-6">
+                    <h3 className="text-lg font-semibold text-purple-600 mb-4 flex items-center gap-2">
+                      <BookOpen className="w-5 h-5" />
+                      A Story from the Sacred Texts
+                    </h3>
+
+                    <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl p-6 border-2 border-purple-200">
+                      {/* Story Title & Source Header */}
+                      <div className="pb-4 mb-4 border-b border-purple-200">
+                        {/* Story Title */}
+                        <div className="flex items-start gap-2 mb-3">
+                          <Users className="w-5 h-5 text-purple-600 flex-shrink-0 mt-0.5" />
+                          <h4 className="text-base font-bold text-purple-800">
+                            {guidance.story.title || guidance.story.character || 'Sacred Story'}
+                          </h4>
+                        </div>
+
+                        {/* Detailed Source */}
+                        <div className="flex items-center gap-2">
+                          <BookOpen className="w-4 h-4 text-purple-600 flex-shrink-0" />
+                          <span className="text-sm text-purple-700 font-medium">
+                            {guidance.story.source}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Narrative Story */}
+                      <div className="prose prose-purple max-w-none">
+                        <p className="text-gray-800 leading-relaxed whitespace-pre-line">
+                          {guidance.story.narrative}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Sources */}
                 {guidance.sources && guidance.sources.length > 0 && (
@@ -518,7 +634,7 @@ function App() {
                           className="space-y-3"
                         >
                           {guidance.sources.map((source, idx) => (
-                            <div 
+                            <div
                               key={idx}
                               className="bg-white/50 rounded-lg p-4 border border-orange-100"
                             >
@@ -533,7 +649,7 @@ function App() {
                                   </p>
                                   {source.metadata && (
                                     <p className="text-xs text-gray-500">
-                                      Source: {source.metadata.source || 'Wisdom Text'} 
+                                      Source: {source.metadata.source || 'Wisdom Text'}
                                       {source.metadata.page && ` - Page ${source.metadata.page}`}
                                     </p>
                                   )}
@@ -546,6 +662,16 @@ function App() {
                     </AnimatePresence>
                   </div>
                 )}
+
+                {/* Feedback Section */}
+                <div className="mt-6 pt-6 border-t border-gray-200">
+                  <FeedbackButtons
+                    question={guidance.problem}
+                    guidance={guidance.guidance}
+                    story={guidance.story}
+                    onFeedbackSubmitted={(vote) => console.log('Feedback submitted:', vote)}
+                  />
+                </div>
 
                 {/* Action Buttons */}
                 <div className="flex gap-3 pt-6 border-t border-orange-100">
@@ -564,7 +690,7 @@ function App() {
         </motion.div>
 
         {/* Footer */}
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.5 }}
