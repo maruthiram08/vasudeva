@@ -9,12 +9,6 @@
             "maxDuration": 30
         }
     },
-    "env": {
-        "OPENAI_API_KEY": "@openai_api_key",
-        "PINECONE_API_KEY": "@pinecone_api_key",
-        "PINECONE_INDEX_NAME": "vasudeva-wisdom",
-        "USE_PINECONE": "true"
-    },
     "headers": [
         {
             "source": "/api/(.*)",
