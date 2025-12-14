@@ -3,72 +3,45 @@ Vercel Serverless Function: /api/health
 GET - Health check endpoint
 """
 
-import os
-import sys
+from http.server import BaseHTTPRequestHandler
 import json
-
-# Add backend to Python path
-backend_path = os.path.join(os.path.dirname(__file__), '../../backend')
-if backend_path not in sys.path:
-    sys.path.insert(0, backend_path)
+import os
 
 
-def handler(request):
-    """Vercel serverless function handler."""
-    
-    # Handle CORS preflight
-    if request.method == 'OPTIONS':
-        return {
-            'statusCode': 200,
-            'headers': {
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'GET, OPTIONS',
-                'Access-Control-Allow-Headers': 'Content-Type',
-            },
-            'body': ''
-        }
-    
-    # Handle GET request
-    if request.method == 'GET':
+class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
         try:
-            # Check if we can connect to Pinecone
-            from vasudeva_rag import VasudevaRAG, PINECONE_AVAILABLE
-            
-            pinecone_key = os.getenv('PINECONE_API_KEY')
-            openai_key = os.getenv('OPENAI_API_KEY')
+            # Check configuration
+            pinecone_key = os.environ.get('PINECONE_API_KEY')
+            openai_key = os.environ.get('OPENAI_API_KEY')
             
             status = {
                 'status': 'healthy' if (pinecone_key and openai_key) else 'degraded',
                 'message': 'Vasudeva API is running on Vercel',
                 'platform': 'vercel',
-                'pinecone_available': PINECONE_AVAILABLE,
                 'pinecone_configured': bool(pinecone_key),
                 'openai_configured': bool(openai_key),
             }
             
-            return {
-                'statusCode': 200,
-                'headers': {
-                    'Content-Type': 'application/json',
-                    'Access-Control-Allow-Origin': '*',
-                },
-                'body': json.dumps(status)
-            }
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps(status).encode())
             
         except Exception as e:
-            return {
-                'statusCode': 503,
-                'headers': {'Content-Type': 'application/json'},
-                'body': json.dumps({
-                    'status': 'unhealthy',
-                    'message': f'Health check failed: {str(e)}',
-                    'platform': 'vercel'
-                })
-            }
-    
-    # Method not allowed
-    return {
-        'statusCode': 405,
-        'headers': {'Content-Type': 'application/json'},
-        'body': json.dumps({'error': 'Method not allowed'})
-    }
+            self.send_response(503)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                'status': 'unhealthy',
+                'message': str(e),
+                'platform': 'vercel'
+            }).encode())
+
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers()

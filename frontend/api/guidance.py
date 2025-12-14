@@ -3,18 +3,19 @@ Vercel Serverless Function: /api/guidance
 POST - Get wisdom-based guidance using Pinecone vectorstore
 """
 
+from http.server import BaseHTTPRequestHandler
+import json
 import os
 import sys
-import json
-from datetime import datetime
 
-# Add backend to Python path
-backend_path = os.path.join(os.path.dirname(__file__), '../../backend')
+# Add backend to path
+backend_path = os.path.join(os.path.dirname(__file__), '..', '..', 'backend')
 if backend_path not in sys.path:
     sys.path.insert(0, backend_path)
 
-# Global RAG instance (reused across invocations for warm starts)
+# Global RAG instance
 _rag_instance = None
+
 
 def get_rag():
     """Get or create VasudevaRAG instance with Pinecone."""
@@ -26,59 +27,44 @@ def get_rag():
     return _rag_instance
 
 
-def handler(request):
-    """Vercel serverless function handler."""
-    from http.server import BaseHTTPRequestHandler
-    
-    # Handle CORS preflight
-    if request.method == 'OPTIONS':
-        return {
-            'statusCode': 200,
-            'headers': {
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'POST, OPTIONS',
-                'Access-Control-Allow-Headers': 'Content-Type',
-            },
-            'body': ''
-        }
-    
-    # Handle POST request
-    if request.method == 'POST':
+class handler(BaseHTTPRequestHandler):
+    def do_POST(self):
         try:
-            body = json.loads(request.body)
+            # Parse request body
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = json.loads(self.rfile.read(content_length)) if content_length else {}
+            
             problem = body.get('problem', '')
             
             if not problem or len(problem) < 10:
-                return {
-                    'statusCode': 400,
-                    'headers': {'Content-Type': 'application/json'},
-                    'body': json.dumps({'error': 'Problem must be at least 10 characters'})
-                }
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': 'Problem must be at least 10 characters'}).encode())
+                return
             
-            # Get guidance from RAG
+            # Get guidance
             rag = get_rag()
             result = rag.get_guidance(problem=problem, skip_story=True)
+            
+            from datetime import datetime
             result['timestamp'] = datetime.now().isoformat()
             
-            return {
-                'statusCode': 200,
-                'headers': {
-                    'Content-Type': 'application/json',
-                    'Access-Control-Allow-Origin': '*',
-                },
-                'body': json.dumps(result)
-            }
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps(result).encode())
             
         except Exception as e:
-            return {
-                'statusCode': 500,
-                'headers': {'Content-Type': 'application/json'},
-                'body': json.dumps({'error': f'Error getting guidance: {str(e)}'})
-            }
-    
-    # Method not allowed
-    return {
-        'statusCode': 405,
-        'headers': {'Content-Type': 'application/json'},
-        'body': json.dumps({'error': 'Method not allowed'})
-    }
+            self.send_response(500)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({'error': f'Error: {str(e)}'}).encode())
+
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers()
