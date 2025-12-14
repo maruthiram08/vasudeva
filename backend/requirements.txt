@@ -11,7 +11,11 @@ langchain-openai>=0.0.2
 openai>=1.7.0
 tiktoken>=0.5.0
 
-# Vector Store & Embeddings - using older versions for Python 3.8 compatibility
+# Vector Store - Pinecone (cloud, Vercel-compatible)
+pinecone-client>=3.0.0
+langchain-pinecone>=0.1.0
+
+# Vector Store - ChromaDB (local, for migration only)
 chromadb==0.4.15
 posthog==3.0.2
 pypdf>=3.17.0
@@ -21,4 +25,7 @@ python-dotenv>=1.0.0
 
 # Google Cloud Storage (for document hosting)
 google-cloud-storage>=2.14.0
+
+# Reranking
+cohere>=5.0.0
 
