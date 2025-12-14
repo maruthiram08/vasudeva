@@ -1,6 +1,8 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// For Vercel deployment, use relative paths (empty string)
+// For local development, use http://localhost:8000
+const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -39,7 +41,7 @@ api.interceptors.response.use(
 export const vasudevaAPI = {
   // Health check
   checkHealth: async () => {
-    const response = await api.get('/health');
+    const response = await api.get('/api/health');
     return response.data;
   },
 
@@ -94,5 +96,3 @@ export const vasudevaAPI = {
 };
 
 export default api;
-
-
